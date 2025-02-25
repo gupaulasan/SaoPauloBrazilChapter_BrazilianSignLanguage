@@ -6,7 +6,8 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://libras.cin.ufpe.br/"
 WORDS_FILE = "v_librasil_words.txt"
-PROGRESS_FILE = "v_librasil_progress.txt"
+WORDS_N_LINKS_FILE = "v_librasil_words_n_links.txt"
+PROGRESS_FILE = "progress.txt"
 
 
 async def fetch_words(session, page):
@@ -23,6 +24,32 @@ async def fetch_words(session, page):
             soup = BeautifulSoup(html, "html.parser")
             words = [a.text.strip() for a in soup.select("table.table tbody tr td a")]
             return words
+
+    except aiohttp.ClientError as e:
+        print(f"Request failed for page {page}: {e}")
+        return []
+
+
+async def fetch_words_and_links(session, page):
+    """Fetch words and their links from a given page."""
+    url = f"{BASE_URL}?page={page}"
+
+    try:
+        async with session.get(url, timeout=60) as response:
+            if response.status != 200:
+                print(f"Skipping page {page}: HTTP {response.status}")
+                return []
+
+            html = await response.text()
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Extract words and links together
+            words_links = [
+                (a.text.strip(), a["href"])
+                for a in soup.select("table.table tbody tr td a")
+            ]
+
+            return words_links
 
     except aiohttp.ClientError as e:
         print(f"Request failed for page {page}: {e}")
@@ -50,6 +77,13 @@ def save_words(words):
             f.write(word + "\n")
 
 
+def save_words_and_links(words_n_links):
+    """Append scraped words and links to words and links file."""
+    with open(WORDS_N_LINKS_FILE, "a") as f:
+        for word, link in words_n_links:
+            f.write(word + f" {link}" + "\n")
+
+
 async def scrape_all_pages():
     """Scrape all pages dynamically until an empty page is found."""
     all_words = []
@@ -59,14 +93,14 @@ async def scrape_all_pages():
     try:
         session = aiohttp.ClientSession()
         while True:
-            words = await fetch_words(session, page)
-            if not words:
+            words_and_links = await fetch_words_and_links(session, page)
+            if not words_and_links:
                 print(f"No more words found. Stopping at page {page}.")
                 break
 
-            save_words(words)  # Save words immediately
+            save_words_and_links(words_and_links)  # Save words immediately
             save_last_page(page)  # Save progress
-            print(f"Scraped {len(words)} words from page {page}.")
+            print(f"Scraped {len(words_and_links)} words from page {page}.")
             page += 1
 
     except asyncio.CancelledError:
